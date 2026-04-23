@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Continuous Authentication Dashboard</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+  background: linear-gradient(135deg, #0f172a, #020617);
+}
+.card {
+  backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.05);
+  border-radius: 16px;
+  padding: 20px;
+}
+.glow {
+  box-shadow: 0 0 20px rgba(59,130,246,0.5);
+}
+</style>
+</head>
+
+<body class="text-white p-6">
+
+<h1 class="text-4xl font-bold mb-6 text-center">
+🚀 Continuous Authentication System
+</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+  <!-- Risk Score -->
+  <div class="card text-center glow">
+    <h2 class="text-lg mb-2">Risk Score</h2>
+    <p id="riskScore" class="text-5xl font-bold text-green-400">--</p>
+  </div>
+
+  <!-- Status -->
+  <div class="card text-center">
+    <h2 class="text-lg mb-2">Decision</h2>
+    <p id="status" class="text-2xl">Waiting...</p>
+  </div>
+
+  <!-- MFA -->
+  <div class="card text-center">
+    <h2 class="text-lg mb-2">MFA Required</h2>
+    <p id="mfa" class="text-2xl">No</p>
+  </div>
+
+</div>
+
+<!-- Graph -->
+<div class="card mt-6">
+  <h2 class="text-xl mb-4">📊 Risk Score Timeline</h2>
+  <canvas id="chart"></canvas>
+</div>
+
+<!-- Controls -->
+<div class="mt-6 flex flex-wrap gap-4">
+
+  <button onclick="sendData()"
+    class="bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-lg">
+    📡 Send Behavior Data
+  </button>
+
+  <button onclick="getMetrics()"
+    class="bg-purple-500 hover:bg-purple-600 px-6 py-2 rounded-lg">
+    📈 Fetch Metrics
+  </button>
+
+  <button onclick="triggerMFA()"
+    class="bg-red-500 hover:bg-red-600 px-6 py-2 rounded-lg">
+    🔑 Trigger MFA
+  </button>
+
+</div>
+
+<!-- Metrics -->
+<div class="card mt-6">
+  <h2 class="text-xl mb-2">Shadow Metrics</h2>
+  <pre id="metrics" class="text-sm text-gray-300"></pre>
+</div>
+
+<script>
+const API = "http://localhost:4000"; // change after deploy
+
+// Chart setup
+const chart = new Chart(document.getElementById("chart"), {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [{
+      label: "Risk Score",
+      data: [],
+      tension: 0.4
+    }]
+  }
+});
+
+// Send fake behavioral data
+async function sendData() {
+  const payload = {
+    context: {
+      userId: "user_demo",
+      sessionId: "sess_" + Date.now(),
+      eventType: "periodic_sample",
+      route: "/dashboard",
+      ipAddressHash: "abc",
+      userAgentHash: "xyz",
+      deviceFingerprint: "device_1",
+      timestamp: Date.now()
+    },
+    signals: [{
+      timestamp: Date.now(),
+      holdTimeMs: Math.random()*200,
+      flightTimeMs: Math.random()*100,
+      typoRate: Math.random(),
+      backspaceRate: Math.random(),
+      mouseVelocity: Math.random()*1000,
+      mouseAcceleration: Math.random()*2000,
+      clickCadence: Math.random()*5
+    }]
+  };
+
+  const res = await fetch(`${API}/api/ingestion/events`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+
+  updateUI(data);
+}
+
+// Update UI
+function updateUI(data) {
+  const score = data.riskScore ?? Math.floor(Math.random()*100);
+
+  const riskEl = document.getElementById("riskScore");
+  const statusEl = document.getElementById("status");
+  const mfaEl = document.getElementById("mfa");
+
+  riskEl.innerText = score;
+
+  let status = "ALLOW";
+  let color = "text-green-400";
+
+  if (score < 50) {
+    status = "BLOCK";
+    color = "text-red-400";
+  } else if (score < 80) {
+    status = "MFA REQUIRED";
+    color = "text-yellow-400";
+  }
+
+  riskEl.className = "text-5xl font-bold " + color;
+  statusEl.innerText = status;
+  mfaEl.innerText = status === "MFA REQUIRED" ? "YES" : "NO";
+
+  chart.data.labels.push(new Date().toLocaleTimeString());
+  chart.data.datasets[0].data.push(score);
+  chart.update();
+}
+
+// Fetch metrics
+async function getMetrics() {
+  const res = await fetch(`${API}/api/shadow/metrics`);
+  const data = await res.json();
+  document.getElementById("metrics").innerText =
+    JSON.stringify(data, null, 2);
+}
+
+// Trigger MFA
+async function triggerMFA() {
+  const payload = {
+    userId: "user_demo",
+    sessionId: "sess_" + Date.now()
+  };
+
+  // Step 1: get challenge
+  const res = await fetch(`${API}/api/auth/mfa/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+
+  const challenge = data.challenge;
+
+  if (!challenge) {
+    alert("No challenge received");
+    return;
+  }
+
+  // Simulate user verification
+  const ok = confirm("Simulate biometric verification?");
+  if (!ok) return;
+
+  // Step 3: send correct fields
+  const verifyRes = await fetch(`${API}/api/auth/mfa/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      challengeId: challenge.challengeId,
+      response: "verified"   // simulated response
+    })
+  });
+
+  const verifyData = await verifyRes.json();
+
+  document.getElementById("metrics").innerText =
+    "MFA Verification Result:\n" + JSON.stringify(verifyData, null, 2);
+}
+</script>
+
+</body>
+</html>
